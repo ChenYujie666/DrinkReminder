@@ -9,6 +9,12 @@ const char* ntpServer = "pool.ntp.org";
 const long gmtOffset_sec = 8 * 3600; // 东八区
 const int daylightOffset_sec = 0;
 
+int lastWeight = 0; // 上次读取的重量
+int curWeight = 0; // 当前读取的重量
+int weight0Count = 0;
+int weightThreshold = 50; // 重量阈值，单位为mg 杯子的重量
+int previousWeight = 0; // 上次有效重量
+
 // 封装获取时间戳的函数
 long getTimestamp() {
     struct tm timeinfo;
@@ -20,15 +26,11 @@ long getTimestamp() {
 }
 
 
-float drinkingWater(float weight) {
-    // 假设每升水的重量为1000克
-    return weight / 1000.0; // 返回升数
-}
+
 
 #define CACHE_SIZE 100
 float dataCache[CACHE_SIZE];
 int cacheIndex = 0;
-float Weight = 0;
 
 void setup()
 {
@@ -40,7 +42,7 @@ void setup()
 	delay(3000);
 	Get_Maopi();		//获取毛皮
 
-
+  // lastWeight = HX711_Read();
 
   // ESP32 WIFI initialization
   WiFi.begin(ssid, password);
@@ -58,22 +60,68 @@ void setup()
 
 void loop()
 {
-	  Weight = Get_Weight();	//计算放在传感器上的重物重量(mg)
-    // 将数据存入缓存
-    dataCache[cacheIndex] = Weight;
-    cacheIndex = (cacheIndex + 1) % CACHE_SIZE;
-
-    Serial.print(float(Weight),3);	//串口显示重量
-	  Serial.print(" ml\n");	//显示单位
-	  Serial.print("\n");		//显示单位
-
-    long timestamp = getTimestamp();
-    if (timestamp != -1) {
-      Serial.print("Timestamp: ");
-      Serial.println(timestamp);
+    curWeight = Get_Weight();	//计算放在传感器上的重物重量(mg)
+    while (curWeight != Get_Weight())
+    {
+        curWeight = Get_Weight();
     }
 
+    if (curWeight <= 50){
+
+        curWeight = 0;
+
+        weight0Count++;
+        return;
+    }else{
+        if (weight0Count >= 3){
+          Serial.print("lastWeight = ");
+          Serial.print(lastWeight);
+          Serial.print("\t");
+
+          Serial.print("curWeight = ");
+          Serial.print(curWeight);
+          Serial.print("\n");
+
+          while(curWeight != Get_Weight())
+          {
+              curWeight = Get_Weight();
+          }
+          int  diff = lastWeight - curWeight;
+          if (diff > 0) {
+              Serial.print("Weight decreased by: ");
+              Serial.print(diff);
+              Serial.print("\n");
+
+          }else{
+              Serial.print("add water: ");
+          }
+
+          weight0Count = 0;
+        }
+        lastWeight = curWeight; // 更新上次重量
+
+    }
+    
+
+
+
+    // if (curWeight == lastWeight) {
+    //     Serial.println("No valid weight detected.");
+    //     return; // 如果重量小于等于0或连续3次为0，则跳过后续处理
+    // }
+
+
+    // // 将数据存入缓存
+    // dataCache[cacheIndex] = curWeight;
+    // cacheIndex = (cacheIndex + 1) % CACHE_SIZE;
+
+
+    long timestamp = getTimestamp();
+    Serial.print(timestamp);
+    Serial.print(", ");
+    Serial.print(float(curWeight),3);	//串口显示重量
+	  Serial.print(" ml\n");	//显示单位
 	
-	delay(500);				//延时10ms
+	delay(1000);				//延时10ms
 
 }
