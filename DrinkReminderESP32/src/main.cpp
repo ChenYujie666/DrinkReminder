@@ -8,6 +8,8 @@
 #include <unordered_map>
 #include <LittleFS.h>
 
+#include <WebServer.h>
+
 const char *ssid = "CYJ";          // 替换为你的WiFi名称
 const char *password = "88888888"; // 替换为你的WiFi密码
 const char *ntpServer = "pool.ntp.org";
@@ -25,6 +27,8 @@ std::unordered_map<int, int> weightCountMap;
 
 long timestamp;
 ESP32Time rtc;
+
+WebServer server(80);
 
 // 连接WiFi
 bool connectWiFi()
@@ -107,6 +111,152 @@ void delete_data()
     }
 }
 
+// 列出所有文件
+void listFiles()
+{
+    String html = "<html><body><h1>ESP32 file system</h1>";
+    html += "<form method='post' action='/upload' enctype='multipart/form-data'>";
+    html += "<input type='file' name='upload'>";
+    html += "<input type='submit' value='upload'>";
+    html += "</form><hr><table border='1'>";
+
+    File root = LittleFS.open("/");
+    File file = root.openNextFile();
+    while (file)
+    {
+        html += "<tr>";
+        html += "<td>" + String(file.name()) + "</td>";
+        html += "<td>" + String(file.size()) + " bytes</td>";
+        html += "<td><a href='/view?file=" + String(file.name()) + "'>view</a></td>";
+        html += "<td><a href='/download?file=" + String(file.name()) + "'>download</a></td>";
+        html += "<td><a href='/delete?file=" + String(file.name()) + "'>delete</a></td>";
+        html += "</tr>";
+        file = root.openNextFile();
+    }
+
+    html += "</table></body></html>";
+    server.send(200, "text/html", html);
+}
+
+// 查看文件内容
+void viewFile()
+{
+    String path = server.arg("file");
+
+    if (!path.startsWith("/"))
+    {
+
+        path = "/" + path;
+    }
+    if (LittleFS.exists(path))
+    {
+        File file = LittleFS.open(path, "r");
+        String content = file.readString();
+        server.send(200, "text/plain", content);
+        file.close();
+    }
+    else
+    {
+        server.send(404, "text/plain", "file not exist! ");
+    }
+}
+
+// 下载文件
+void downloadFile()
+{
+    String path = server.arg("file");
+
+    if (!path.startsWith("/"))
+    {
+        path = "/" + path;
+    }
+
+    if (LittleFS.exists(path))
+    {
+        File file = LittleFS.open(path, "r");
+        server.sendHeader("Content-Type", "application/octet-stream");
+        server.sendHeader("Content-Disposition", "attachment; filename=" + path);
+        server.streamFile(file, "application/octet-stream");
+        file.close();
+    }
+    else
+    {
+        server.send(404, "text/plain", "file not exist! ");
+    }
+}
+
+// 处理文件上传
+void handleFileUpload()
+{
+    HTTPUpload &upload = server.upload();
+    File uploadFile;
+    if (upload.status == UPLOAD_FILE_START)
+    {
+        // 删除已存在的同名文件
+        if (LittleFS.exists(upload.filename))
+        {
+            LittleFS.remove(upload.filename);
+        }
+        uploadFile = LittleFS.open(upload.filename, "w");
+    }
+    else if (upload.status == UPLOAD_FILE_WRITE)
+    {
+        if (uploadFile)
+        {
+            uploadFile.write(upload.buf, upload.currentSize);
+        }
+    }
+    else if (upload.status == UPLOAD_FILE_END)
+    {
+        if (uploadFile)
+        {
+            uploadFile.close();
+        }
+    }
+}
+
+// 删除文件
+void deleteFile()
+{
+    String path = server.arg("file");
+
+    if (!path.startsWith("/"))
+    {
+        path = "/" + path;
+    }
+    if (LittleFS.exists(path))
+    {
+        LittleFS.remove(path);
+        server.sendHeader("Location", "/");
+        server.send(303);
+    }
+    else
+    {
+        server.send(404, "text/plain", "文件不存在");
+    }
+}
+
+void startWebServer()
+{
+
+    // 设置Web服务器路由
+    server.on("/", HTTP_GET, []()
+              { listFiles(); });
+
+    server.on("/view", HTTP_GET, []()
+              { viewFile(); });
+
+    server.on("/download", HTTP_GET, []()
+              { downloadFile(); });
+
+    server.on("/upload", HTTP_POST, []()
+              { server.send(200); }, handleFileUpload);
+
+    server.on("/delete", HTTP_GET, []()
+              { deleteFile(); });
+    server.enableCORS();
+    server.begin();
+}
 void setup()
 {
 
@@ -147,6 +297,8 @@ void setup()
         Serial.println("LittleFS 挂载成功");
     }
     read_data();
+
+    startWebServer();
 
     Serial.print("Initialized Done! \n");
 }
@@ -209,6 +361,8 @@ void loop()
         }
         lastWeight = curWeight; // 更新上次重量
     }
+
+    server.handleClient();
 
     delay(1000);
 }
